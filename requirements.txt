@@ -1,4 +1,7 @@
-streamlit==1.25.0
-transformers==4.30.2
-torch==2.0.1
-safetensors
+streamlit>=1.30.0
+transformers>=4.41.1
+torch>=2.1.0
+ollama>=0.1.6
+typing-extensions>=4.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0  # Optional, if you use .env for OLLAMA_HOST
