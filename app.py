@@ -18,8 +18,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'Get Help': 'https://github.com/yourusername/storyforge-ai',
-        'Report a bug': "https://github.com/yourusername/storyforge-ai/issues",
+        'Get Help': 'https://github.com/Shashwath800/storyforge-ai',
+        'Report a bug': "https://github.com/Shashwath800/storyforge-ai/issues",
         'About': "StoryForge AI - Create captivating stories with the power of AI"
     }
 )
@@ -161,100 +161,74 @@ def load_model() -> Optional[Tuple]:
 
 # Enhanced story generation function
 @handle_errors
-def generate_story(model, tokenizer, device, prompt: str, max_length: int,
-                   temperature: float, top_p: float, top_k: int, 
-                   num_beams: int = 1, length_penalty: float = 1.0) -> Optional[str]:
-    """Generate complete, high-quality story using the fine-tuned model"""
+def generate_story_scenes(model, tokenizer, device, prompt: str, total_length: int,
+                          temperature: float, top_p: float, top_k: int,
+                          num_scenes: int = 3, num_beams: int = 1, length_penalty: float = 1.0) -> str:
+    """
+    Generate a complete story in multiple scenes to avoid truncation and improve coherence.
+    """
     if not all([model, tokenizer, device]):
         st.error("Model not loaded properly. Please refresh the page.")
-        return None
+        return ""
     
-    try:
-        # Enhanced prompt engineering for better story generation
-        enhanced_prompt = f"""{prompt}
-
-Once upon a time, """
+    scenes = []
+    words_per_scene = total_length // num_scenes
+    
+    # Initialize scene prompt
+    scene_prompt = prompt + "\n\nOnce upon a time, "
+    
+    for scene_num in range(1, num_scenes + 1):
+        st.info(f"📝 Generating Scene {scene_num} of {num_scenes}...")
         
-        # Tokenize input with attention mask
-        inputs = tokenizer(
-            enhanced_prompt, 
-            return_tensors="pt", 
-            truncation=True, 
-            max_length=512,
-            padding=True
-        )
+        # Adjust max_new_tokens based on approx. word count
+        max_tokens = min(words_per_scene * 2, 1024)
+        
+        inputs = tokenizer(scene_prompt, return_tensors="pt", truncation=True, padding=True)
         input_ids = inputs.input_ids.to(device)
         attention_mask = inputs.attention_mask.to(device)
         
-        # Calculate actual max tokens for generation
-        prompt_length = len(input_ids[0])
-        max_new_tokens = min(max_length, 1024 - prompt_length)
-        
-        # Generate with progress tracking
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        generation_stages = [
-            (0.2, "📝 Analyzing prompt..."),
-            (0.4, "🎭 Creating characters..."),
-            (0.6, "🏰 Building world..."),
-            (0.8, "✍️ Crafting narrative..."),
-            (1.0, "✨ Finalizing story...")
-        ]
-        
-        for progress, message in generation_stages:
-            progress_bar.progress(progress)
-            status_text.text(message)
-            time.sleep(0.5)
+        # Add ending instruction for the last scene
+        scene_instruction = " End this scene naturally." if scene_num < num_scenes else " Conclude the story with a satisfying ending."
         
         with torch.no_grad():
-            # Enhanced generation parameters for better story quality
             output = model.generate(
                 input_ids,
                 attention_mask=attention_mask,
-                max_new_tokens=max_new_tokens,
-                min_length=prompt_length + 100,  # Ensure minimum story length
+                max_new_tokens=max_tokens,
                 do_sample=True,
                 top_k=top_k,
                 top_p=top_p,
                 temperature=temperature,
-                repetition_penalty=1.3,  # Increased to reduce repetition
-                no_repeat_ngram_size=4,  # Increased to avoid phrase repetition
+                repetition_penalty=1.3,
+                no_repeat_ngram_size=4,
                 length_penalty=length_penalty,
                 num_beams=num_beams,
-                early_stopping=False,  # Changed to False for complete stories
+                early_stopping=False,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
                 use_cache=True
             )
         
-        progress_bar.progress(100)
-        status_text.text("✅ Story generated successfully!")
-        time.sleep(1)
-        progress_bar.empty()
-        status_text.empty()
+        scene_text = tokenizer.decode(output[0], skip_special_tokens=True)
         
-        # Decode and clean up the output
-        story = tokenizer.decode(output[0], skip_special_tokens=True)
+        # Remove prompt repetition
+        if scene_text.startswith(scene_prompt):
+            scene_text = scene_text[len(scene_prompt):].strip()
         
-        # Remove the original prompt from the output
-        if story.startswith(enhanced_prompt):
-            story = story[len(enhanced_prompt):].strip()
-        elif story.startswith(prompt):
-            story = story[len(prompt):].strip()
+        # Append ending instruction if not last scene
+        scene_text += scene_instruction
         
-        # Post-process the story for better formatting
-        story = post_process_story(story, title=prompt.split('\n')[0].replace('Title:', '').strip())
-        
-        return story
-        
-    except torch.cuda.OutOfMemoryError:
-        st.error("⚠️ GPU memory insufficient. Try reducing the story length.")
-        return None
-    except Exception as e:
-        logger.error(f"Story generation failed: {str(e)}")
-        st.error(f"Story generation failed: {str(e)}")
-        return None
+        scenes.append(scene_text)
+        # Update prompt with generated scene for next iteration
+        scene_prompt += scene_text + "\n\n"
+    
+    # Combine scenes
+    full_story = "\n\n".join(scenes)
+    
+    # Post-process for readability
+    full_story = post_process_story(full_story, title=prompt.split('\n')[0].replace('Title:', '').strip())
+    
+    return full_story
 
 
 def post_process_story(story: str, title: str = "") -> str:
@@ -561,11 +535,20 @@ Create a complete and engaging {selected_genre.lower()} story with a clear begin
 Story:"""
                 
                 # Generate story with enhanced parameters
-                story = generate_story(
-                    model, tokenizer, device, prompt,
-                    length, temperature, top_p, top_k,
-                    num_beams, length_penalty
-                )
+                story = generate_story_scenes(
+                    model=model,
+                    tokenizer=tokenizer,
+                    device=device,
+                    prompt=prompt,
+                    total_length=length,       # Total word count
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    num_scenes=3,              # You can adjust 3-5
+                    num_beams=num_beams,
+                    length_penalty=length_penalty
+                    )
+
                 
                 if story:
                     st.session_state.current_story = story
